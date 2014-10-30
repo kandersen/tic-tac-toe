@@ -106,7 +106,7 @@ mainLoop = do
           mainLoop
         _ -> (lift $ putStrLn "That spot is taken, try again.") >> mainLoop  
  
-data Rose a = a :> [Rose a]
+data Rose a = a :> [Rose a] deriving (Show)
 
 root :: Rose a -> a
 root (a :> _) = a
@@ -130,11 +130,21 @@ gameTree t b | Just _ <- winner b = b :> []
 minimax :: Token -> Rose Board -> Rose Int
 minimax player = go player
   where
-    go p (b :> []) | Just w <- winner b = if w == player then 1 else -1 :> []
-    go p (b :> bs) | p == player        = maximum    
-
+    minimum' [n] = n
+    minimum' (-1:_) = -1
+    minimum' (n:ns) = n `min` minimum' ns
+    maximum' [n] = n
+    maximum' (1:_) = 1
+    maximum' (n:ns) = n `max` maximum' ns
+    go _ (b :> []) | Just w <- winner b  = (if w == player then 1 else -1) :> []
+                   | Nothing <- winner b = 0 :> []
+    go p (b :> bs)                       = ((if p == player then maximum' else minimum') $ map root children) :> children
+      where
+        children :: [Rose Int]
+        children = map (go (nextPlayer p)) bs
 
 main :: IO ()
 main = do
   putStrLn "Welcome to Tic Tac Toe -- You are X!"
+  print $ minimax X . gameTree X $ emptyBoard 
   evalStateT mainLoop (X, emptyBoard)
