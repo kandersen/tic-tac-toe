@@ -114,8 +114,6 @@ root (a :> _) = a
 children :: Rose a -> [Rose a]
 children (_ :> cs) = cs
 
-
-
 moves :: Token -> Board -> [Board]
 moves token b = do
   row <- [0, 1, 2]
@@ -136,9 +134,10 @@ minimax player = go player
     maximum' [n] = n
     maximum' (1:_) = 1
     maximum' (n:ns) = n `max` maximum' ns
-    go _ (b :> []) | Just w <- winner b  = (if w == player then 1 else -1) :> []
-                   | Nothing <- winner b = 0 :> []
-    go p (b :> bs)                       = ((if p == player then maximum' else minimum') $ map root children) :> children
+    go _ (b :> []) = case winner b of
+      Just w  -> (if w == player then 1 else -1) :> []
+      Nothing -> 0 :> []
+    go p (b :> bs) = ((if p == player then maximum' else minimum') $ map root children) :> children
       where
         children :: [Rose Int]
         children = map (go (nextPlayer p)) bs
@@ -146,5 +145,6 @@ minimax player = go player
 main :: IO ()
 main = do
   putStrLn "Welcome to Tic Tac Toe -- You are X!"
-  print $ minimax X . gameTree X $ emptyBoard 
+  print $ root . minimax X . gameTree X $ emptyBoard
+  print $ root $ gameTree X $ emptyBoard 
   evalStateT mainLoop (X, emptyBoard)
