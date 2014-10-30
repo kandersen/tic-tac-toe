@@ -1,28 +1,34 @@
 module Main where
 
-import Data.List (nub, intersperse)
+import Data.List (nub, intersperse, intercalate)
 import Control.Monad (mplus)
+import Control.Monad.State
+import Control.Applicative
 
-data Field = X | B | O 
+data Token = X | B | O 
            deriving (Show, Eq)
 
-type Row = [Field]
+nextPlayer :: Token -> Token
+nextPlayer X = O
+nextPlayer O = X
+
+type Row = [Token]
 
 type Board = [Row]
 
-ppField :: Field -> Char
-ppField X = 'X'
-ppField B = ' '
-ppField O = 'O'
+ppToken :: Token -> Char
+ppToken X = 'X'
+ppToken B = ' '
+ppToken O = 'O'
 
 ppRow :: Row -> String
-ppRow = intersperse '|' . map ppField
+ppRow = intersperse '|' . map ppToken
 
 horLine :: String
 horLine = "-+-+-"
 
 ppBoard :: Board -> String
-ppBoard = concat . intersperse "\n" . intersperse horLine . map ppRow
+ppBoard = intercalate "\n" . intersperse horLine . map ppRow
 
 rows, columns, diagonals :: Board -> [Row]
 rows = id
@@ -35,35 +41,100 @@ diagonals b = [diagonal b, diagonal . map reverse $ b]
   where
     diagonal = zipWith (flip (!!)) [0..]
 
-winner :: Board -> Maybe Field
+winner :: Board -> Maybe Token
 winner b = foldl mplus Nothing . map checkRow $ columns b ++ rows b ++ diagonals b
   where
-    checkRow :: Row -> Maybe Field
+    checkRow :: Row -> Maybe Token
     checkRow r = case nub r of
       [e] | e /= B -> Just e
       _ -> Nothing
 
-modify :: Int -> (a -> a) -> [a] -> [a]
-modify ix f = zipWith (\ix' a -> if ix' == ix then f a else a) [0..]
+applyAt :: Int -> (a -> a) -> [a] -> [a]
+applyAt ix f = zipWith (\ix' a -> if ix' == ix then f a else a) [0..]
 
-place :: Field -> Int -> Int -> Board -> Board
-place piece row column = modify row (modify column (const piece))
+peak :: Int -> Int -> Board -> Token
+peak row column = (!!column) . (!!row)
 
+write :: Int -> Int -> Token -> Board -> Board
+write row column piece = applyAt row (applyAt column (const piece))
+
+full :: Board -> Bool
+full = all id . map (all (/=B)) 
+
+determineStatus :: Board -> Either (Maybe Token) ()
+determineStatus b | Just w <- winner b = Left (Just w)
+                  | full b             = Left Nothing
+                  | otherwise          = Right ()
+
+emptyBoard :: Board
 emptyBoard = replicate 3 $ replicate 3 B
 
-ex1 = [[X, X, O],
-       [X, O, B],
-       [O, B, B]]
+type GameState = (Token, Board)
 
-gameLoop :: IO ()
-gameLoop = undefine
+type GameMonad = StateT GameState IO
+
+player :: GameMonad Token
+player = fst <$> get
+
+board :: GameMonad Board
+board = snd <$> get
+
+modifyBoard :: (Board -> Board) -> GameMonad ()
+modifyBoard f = modify $ (\(token, board) -> (token, f board))
+
+modifyPlayer :: (Token -> Token) -> GameMonad ()
+modifyPlayer f = modify (\(token, board) -> (f token, board))
+
+render :: GameMonad ()
+render = board >>= lift . putStrLn . ppBoard
+
+mainLoop :: GameMonad ()
+mainLoop = do
+  render
+  status <- determineStatus <$> board
+  case status of
+    Left Nothing -> lift $ putStrLn "Draw!"
+    Left (Just w)-> lift $ putStrLn $ "Congratulations to " ++ ppToken w : "!"
+    Right () -> do
+      [row, column] <- lift . sequence $ replicate 2 (read <$> getLine)
+      tokenAtBoard <- peak row column <$> board
+      case tokenAtBoard of
+        B -> do 
+          tokenToPlace <- player
+          modifyBoard (write row column tokenToPlace)
+          modifyPlayer nextPlayer
+          mainLoop
+        _ -> (lift $ putStrLn "That spot is taken, try again.") >> mainLoop  
+ 
+data Rose a = a :> [Rose a]
+
+root :: Rose a -> a
+root (a :> _) = a
+
+children :: Rose a -> [Rose a]
+children (_ :> cs) = cs
+
+
+
+moves :: Token -> Board -> [Board]
+moves token b = do
+  row <- [0, 1, 2]
+  column <- [0, 1, 2]
+  guard $ peak row column b == B
+  return $ write row column token b
+
+gameTree :: Token -> Board -> Rose Board
+gameTree t b | Just _ <- winner b = b :> []
+             | otherwise          = b :> map (gameTree (nextPlayer t)) (moves t b) 
+
+minimax :: Token -> Rose Board -> Rose Int
+minimax player = go player
+  where
+    go p (b :> []) | Just w <- winner b = if w == player then 1 else -1 :> []
+    go p (b :> bs) | p == player        = maximum    
+
 
 main :: IO ()
 main = do
   putStrLn "Welcome to Tic Tac Toe -- You are X!"
-  print $ rows ex1
-  print $ columns ex1
-  print $ diagonals ex1
-  print $ winner ex1
-  print $ place X 2 2 ex1
-  putStrLn $ ppBoard ex1
+  evalStateT mainLoop (X, emptyBoard)
