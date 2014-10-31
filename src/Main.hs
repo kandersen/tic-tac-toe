@@ -1,16 +1,23 @@
 module Main where
 
-import Data.List (nub, intersperse, intercalate)
+import Data.List (nub, intersperse, intercalate, sortBy)
+import Data.Function (on)
 import Control.Monad (mplus)
 import Control.Monad.State
 import Control.Applicative
 
+data Player = P1 | P2
+
 data Token = X | B | O 
            deriving (Show, Eq)
 
-nextPlayer :: Token -> Token
-nextPlayer X = O
-nextPlayer O = X
+nextPlayer :: Player -> Player
+nextPlayer P1 = P2
+nextPlayer P2 = P1
+
+tokenOf :: Player -> Token
+tokenOf P1 = X
+tokenOf P2 = O
 
 type Row = [Token]
 
@@ -69,7 +76,7 @@ determineStatus b | Just w <- winner b = Left (Just w)
 emptyBoard :: Board
 emptyBoard = replicate 3 $ replicate 3 B
 
-type GameState = (Token, Board)
+type GameState = (Player, Board)
 
 type GameMonad = StateT GameState IO
 
@@ -80,10 +87,10 @@ board :: GameMonad Board
 board = snd <$> get
 
 modifyBoard :: (Board -> Board) -> GameMonad ()
-modifyBoard f = modify $ (\(token, board) -> (token, f board))
+modifyBoard f = modify $ (\(t, b) -> (t, f b))
 
-modifyPlayer :: (Token -> Token) -> GameMonad ()
-modifyPlayer f = modify (\(token, board) -> (f token, board))
+endTurn :: GameMonad ()
+endTurn = modify (\(t, b) -> (nextPlayer t, b))
 
 render :: GameMonad ()
 render = board >>= lift . putStrLn . ppBoard
@@ -96,16 +103,17 @@ mainLoop = do
     Left Nothing -> lift $ putStrLn "Draw!"
     Left (Just w)-> lift $ putStrLn $ "Congratulations to " ++ ppToken w : "!"
     Right () -> do
-      [row, column] <- lift . sequence $ replicate 2 (read <$> getLine)
-      tokenAtBoard <- peak row column <$> board
-      case tokenAtBoard of
-        B -> do 
-          tokenToPlace <- player
+      tokenToPlace <- player
+      case tokenToPlace of
+        X -> do
+          (row, column) <- lift $ read <$> getLine
           modifyBoard (write row column tokenToPlace)
-          modifyPlayer nextPlayer
-          mainLoop
-        _ -> (lift $ putStrLn "That spot is taken, try again.") >> mainLoop  
- 
+        _ -> do
+          (row, column) <- decideMove tokenToPlace <$> board
+          modifyBoard (write row column tokenToPlace)
+      endTurn
+      mainLoop
+
 data Rose a = a :> [Rose a] deriving (Show)
 
 root :: Rose a -> a
@@ -114,18 +122,18 @@ root (a :> _) = a
 children :: Rose a -> [Rose a]
 children (_ :> cs) = cs
 
-moves :: Token -> Board -> [Board]
+moves :: Token -> Board -> [(Board, (Int, Int))]
 moves token b = do
   row <- [0, 1, 2]
   column <- [0, 1, 2]
   guard $ peak row column b == B
-  return $ write row column token b
+  return $ (write row column token b, (row, column))
 
-gameTree :: Token -> Board -> Rose Board
+gameTree :: Player -> Board -> Rose Board
 gameTree t b | Just _ <- winner b = b :> []
-             | otherwise          = b :> map (gameTree (nextPlayer t)) (moves t b) 
+             | otherwise          = b :> map (gameTree (nextPlayer t)) (map fst $ moves (tokenOf t) b) 
 
-minimax :: Token -> Rose Board -> Rose Int
+minimax :: Player -> Rose Board -> Rose Int
 minimax player = go player
   where
     minimum' [n] = n
@@ -142,9 +150,12 @@ minimax player = go player
         children :: [Rose Int]
         children = map (go (nextPlayer p)) bs
 
+decideMove :: Token -> Board -> (Int, Int)
+decideMove p b = snd . head . sortBy (compare `on` (root . fst)) . map (\(b', m) -> (minimax p . gameTree p $ b', m)) $ moves p b
+
 main :: IO ()
 main = do
   putStrLn "Welcome to Tic Tac Toe -- You are X!"
-  print $ root . minimax X . gameTree X $ emptyBoard
+  print $ decideMove X emptyBoard
   print $ root $ gameTree X $ emptyBoard 
   evalStateT mainLoop (X, emptyBoard)
