@@ -1,9 +1,10 @@
 module Main where
 
-import Data.List (nub, intersperse, intercalate, sortBy)
+import Data.List (nub, intersperse, intercalate, minimumBy, maximumBy, sortBy)
 import Data.Function (on)
 import Control.Monad.State
 import Control.Applicative
+import Control.Arrow (second, first)
 
 data Player = P1 | P2
             deriving (Eq)
@@ -66,7 +67,7 @@ write :: Int -> Int -> Token -> Board -> Board
 write row column piece = applyAt row (applyAt column (const piece))
 
 full :: Board -> Bool
-full = all id . map (all (/=B)) 
+full = all id . map (notElem B) 
 
 determineStatus :: Board -> Either (Maybe Token) ()
 determineStatus b | Just w <- winner b = Left (Just w)
@@ -87,13 +88,13 @@ board :: GameMonad Board
 board = snd <$> get
 
 modifyBoard :: (Board -> Board) -> GameMonad ()
-modifyBoard f = modify $ (\(t, b) -> (t, f b))
+modifyBoard f = modify $ second f
 
 endTurn :: GameMonad ()
-endTurn = modify (\(t, b) -> (nextPlayer t, b))
+endTurn = modify $ first nextPlayer
 
 render :: GameMonad ()
-render = board >>= lift . putStrLn . ppBoard >> (lift $ putStrLn "")
+render = board >>= lift . putStrLn . ppBoard >> lift (putStrLn "")
 
 mainLoop :: GameMonad ()
 mainLoop = do
@@ -107,7 +108,7 @@ mainLoop = do
       (row, column) <- case playerInTurn of
         P1 -> lift $ read <$> getLine
         P2 -> decideMove playerInTurn <$> board
-      modifyBoard (write row column (tokenOf playerInTurn))
+      modifyBoard $ write row column $ tokenOf playerInTurn
       endTurn
       mainLoop
 
@@ -124,32 +125,33 @@ moves token b = do
   row <- [0, 1, 2]
   column <- [0, 1, 2]
   guard $ peak row column b == B
-  return $ (write row column token b, (row, column))
+  return (write row column token b, (row, column))
 
 gameTree :: Player -> Board -> Rose Board
 gameTree t b | Just _ <- winner b = b :> []
-             | otherwise          = b :> map (gameTree (nextPlayer t)) (map fst $ moves (tokenOf t) b) 
+             | otherwise          = b :> map (gameTree (nextPlayer t) . fst) (moves (tokenOf t) b) 
+
+boundedSearch :: Eq a => a -> (a -> a -> a) -> [a] -> a
+boundedSearch bound (<+>) = search
+  where
+    search [] = error "-- boundedSearch: Can't search empty list"
+    search [n] = n
+    search (n:ns) | n == bound = n
+                  | otherwise  = n <+> search ns
 
 minimax :: Player -> Rose Board -> Rose Int
 minimax playerInTurn = go playerInTurn
   where
-    boundedSearch :: Eq a => a -> (a -> a -> a) -> [a] -> a
-    boundedSearch bound (<+>) = search
-      where
-        search []  = error "-- boundedSearch: can't search empty list"
-        search [n] = n
-        search (n:ns) | n == bound = n
-                      | otherwise  = n <+> search ns
     go _ (b :> []) = case winner b of
       Just w  -> (if w == tokenOf playerInTurn then 1 else -1) :> []
       Nothing -> 0 :> []
-    go p (_ :> bs) = ((if p == playerInTurn then boundedSearch 1 max else boundedSearch (-1) min) $ map root childrenMinimax) :> childrenMinimax
+    go p (_ :> bs) = (if p == playerInTurn then boundedSearch 1 max else boundedSearch (-1) min) (map root childrenMinimax) :> childrenMinimax
       where
         childrenMinimax :: [Rose Int]
         childrenMinimax = map (go (nextPlayer p)) bs
 
 decideMove :: Player -> Board -> (Int, Int)
-decideMove p b = snd . head . sortBy (compare `on` (root . fst)) . map (\(b', m) -> (minimax p . gameTree p $ b', m)) $ moves (tokenOf p) b
+decideMove p b = snd . minimumBy (compare `on` (root . fst)) . map (first (minimax p . gameTree p)) $ moves (tokenOf p) b
 
 main :: IO ()
 main = do
