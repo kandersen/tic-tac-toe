@@ -145,13 +145,13 @@ minimax playerInTurn = go playerInTurn
     go _ (b :> []) = case winner b of
       Just w  -> (if w == tokenOf playerInTurn then 1 else -1) :> []
       Nothing -> 0 :> []
-    go p (_ :> bs) = (if p == playerInTurn then boundedSearch 1 max else boundedSearch (-1) min) (map root childrenMinimax) :> childrenMinimax
+    go p (_ :> bs) = (if p /= playerInTurn then boundedSearch 1 max else boundedSearch (-1) min) (map root childrenMinimax) :> childrenMinimax
       where
         childrenMinimax :: [Rose Int]
         childrenMinimax = map (go (nextPlayer p)) bs
 
 decideMove :: Player -> Board -> (Int, Int)
-decideMove p b = snd . minimumBy (compare `on` (root . fst)) . map (first (minimax p . gameTree p)) $ moves (tokenOf p) b
+decideMove p b = snd . maximumBy (compare `on` (root . fst)) . map (first (minimax p . gameTree p)) $ moves (tokenOf p) b
 
 main :: IO ()
 main = do
